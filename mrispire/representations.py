@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from numpy.linalg import svd
 from scipy import sparse
 
@@ -23,9 +22,18 @@ class GridDatabase(SparseRepresentation):
         (A) vector of float values specifying the physical parameter values 
         corresponding to the columns of the database. The default is a range
         from 0 to the number of columns.
+    sparse_th: float, optional
+        Sparsity threshold - if the magnitude of the projection of a signal is 
+        below it, the sparsifying method returns zero instead.
+        The default is 0.
 
     Attributes
     ----------
+    param_values: ndarray
+        (A) vector of float values specifying the physical parameter values.
+    sparse_th: float
+        Sparsity threshold - if the magnitude of the projection of a signal is 
+        below it, the sparsifying method returns zero instead.
     database
     norms
     n_rep
@@ -33,12 +41,14 @@ class GridDatabase(SparseRepresentation):
 
     """
 
-    def __init__(self, database=np.array([[]]), param_values=None):
+    def __init__(self, database=np.array([[]]), param_values=None, 
+                 sparse_th=0):
         self.database = database
         if param_values is not None:
             self.param_values = param_values
         else:
             self.param_values = np.arange(database.shape[1])
+        self.sparse_th = sparse_th
 
     @property
     def database(self):
@@ -125,6 +135,8 @@ class GridDatabase(SparseRepresentation):
         selected_prod = dot_prod_all[selected_atoms, np.arange(data.shape[1])]
         # to get the rho values need to divide by norms
         coeff = selected_prod / self.norms[selected_atoms]
+        # apply the signal threshold
+        coeff[np.abs(selected_prod) <= self.sparse_th] = 0
         # the rho and ph values are the magnitudes and the phases of the 
         # complex coefficients respectively 
         rho_values = np.abs(coeff)
@@ -206,6 +218,11 @@ class DictionaryKSVD(SparseRepresentation):
         parameter encoding dimension (e.g. time) along the columns. The
         columns must be normalized. 
         The default is None.
+    sparse_th: float, optional
+        Sparsity threshold - if the magnitude of the residual of the OMP
+        projection of a signal is below it, the sparsifying method returns 
+        zero instead of the remaining coefficients.
+        The default is 0.
 
     Attributes
     ----------
@@ -215,14 +232,17 @@ class DictionaryKSVD(SparseRepresentation):
     dictionary: ndarray
         (PxA) matrix of float values containing the dictionary with the 
         parameter encoding dimension (e.g. time) along the columns. 
+    sparse_th: float
+        Sparsity threshold.
     n_atoms
 
     """
 
-    def __init__(self, n_rep=3, *, dictionary=None):
+    def __init__(self, n_rep=3, dictionary=None, sparse_th=0):
         self.n_rep = n_rep
         if dictionary is not None:
             self.dictionary = dictionary
+        self.sparse_th = sparse_th
             
     @property
     def n_atoms(self):
@@ -250,7 +270,8 @@ class DictionaryKSVD(SparseRepresentation):
         
         """
 
-        coeff = OMP(self.dictionary, data, self.n_rep)
+        coeff = OMP(self.dictionary, data, self.n_rep, 
+                    threshold=self.sparse_th)
         projected_data = self.dictionary @ coeff
         return projected_data, coeff
 
@@ -291,6 +312,11 @@ class PrincipalComponents(SparseRepresentation):
     norm_data: bool, optional
         Whether to normalize the train data before extracting the PCs.
         The default is True.
+    sparse_th: float, optional
+        Sparsity threshold - if the magnitude of a coefficient of the PC
+        projection of a signal is below it, the sparsifying method returns 
+        zero instead of the coefficient.
+        The default is 0.
 
     Attributes
     ----------
@@ -299,16 +325,19 @@ class PrincipalComponents(SparseRepresentation):
     pcs_stored: ndarray
         (P x n_pc_stored) matrix of float values containing the stored PCs 
         with the parameter encoding dimension (e.g. time) along the columns.
+    sparse_th: float
+        Sparsity threshold.
     pcs  
     n_atoms
 
     """
     def __init__(self, n_rep=None, train_data=None, n_pc_stored=None, 
-                 norm_data=True):
+                 norm_data=True, sparse_th=0):
         self.n_rep = n_rep
         if train_data is not None:
             self.train(train_data, n_pc_stored=n_pc_stored, 
                        norm_data=norm_data)
+        self.sparse_th = sparse_th
 
     @property
     def pcs(self):
@@ -349,7 +378,7 @@ class PrincipalComponents(SparseRepresentation):
         -------
         ndarray
             (P x n_rep) matrix of float values containing the extracted 
-            PCs to be used in spasifying methods.
+            PCs to be used in sparsifying methods.
         ndarray
             (n_rep x N) vector of float values representing the coefficients 
             by which the PCs are multiplied to obtain the projections of the 
@@ -401,6 +430,8 @@ class PrincipalComponents(SparseRepresentation):
         """
 
         coeff = self.pcs.T.conj() @ data
+        # apply the signal threshold
+        coeff[np.abs(coeff) <= self.sparse_th] = 0
         projected_data = self.pcs @ coeff
         return projected_data, coeff
 
