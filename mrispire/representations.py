@@ -3,40 +3,78 @@ import matplotlib.pyplot as plt
 from numpy.linalg import svd
 from scipy import sparse
 
-from .mrimages import *
-from .mwrappers import OMP_separate_phase
-
 class SparseRepresentation(object):
+    """Abstract class for all sparse representations."""
 
     def error_profile(self, data):
         pass
 
 class GridDatabase(SparseRepresentation):
+    """Class containing the grid database sparse representation.
 
-    def __init__(self, database=np.array([[]]), param_values=None, threshold_signal=1e-5):
+    Parameters
+    ----------
+    database: ndarray, optional
+        (PxA) matrix of float values, the columns of which represent the 
+        the intensity profiles of a voxel along the parameter encoding
+        dimension (e.g. time) at specific values of a parameter (e.g. T2) that 
+        maps to that voxel. The default is an empty array.
+    param_values: ndarray, optional
+        (A) vector of float values specifying the physical parameter values 
+        corresponding to the columns of the database. The default is a range
+        from 0 to the number of columns.
+
+    Attributes
+    ----------
+    database
+    norms
+    n_atoms
+
+    """
+
+    def __init__(self, database=np.array([[]]), param_values=None):
         self.database = database
         if param_values is not None:
             self.param_values = param_values
         else:
             self.param_values = np.arange(database.shape[1])
-        self.threshold_signal = threshold_signal
 
     @property
     def database(self):
+        """ndarray: The database of signal profiles for different parameter 
+        values.
+
+        (PxA) matrix of float values, the columns of which represent the 
+        the intensity profiles of a voxel along the parameter encoding
+        dimension (e.g. time) at specific values of a parameter (e.g. T2) that 
+        maps to that voxel.
+        
+        """
+
+        # return the privately stored database
         return self._database
 
     @database.setter
     def database(self, database):
+        # store the database privately
         self._database = database
+        # whenever the database is stored/changed the setter also stores a
+        # normalized version of it together with its norms
         self._norm_database = database / np.linalg.norm(database, axis=0)
         self._norms = np.linalg.norm(database, axis=0)
 
     @property
     def norms(self):
+        """ndarray: (A) vector of float contaning the norms of the signals in 
+        the database.
+        """
+
         return self._norms
 
     @property
     def n_atoms(self):
+        """int: The number A of atoms i.e. signals stored in the database."""
+
         return self._database.shape[1]
 
     def project(self, data):
@@ -44,57 +82,106 @@ class GridDatabase(SparseRepresentation):
 
         Parameters
         ----------
-        data: float matrix
-            Matrix in which the signals to be projected 
-            are placed along the columns.
+        data: ndarray
+            (PxN) matrix of complex values in which the signals to be 
+            projected are placed along the columns.
 
         Returns
         -------
-        projected_data: float matrix
-            Matrix in which the signal projections of 
+        projected_data: ndarray
+            (PxN) matrix of float values in which the signal projections of 
             the data are placed along the columns.
-        selected_atoms: int vector
-            The index of the atom to which each column of 
-            the data was projected.
-        rho_values: float vector
-            The coefficient by which the atom is multiplied
-            to obtain the projection.
-        ph_values: float vector
-            The phases associated with the projections.
-        param_values: float vector
-            The parameter values associated with the selected
-            atoms.
+        coeff: ndarray
+            (N) vector of complex representing the coefficients by which the 
+            atoms are multiplied to obtain the projections.
+        selected_atoms: ndarray
+            (N) vector of the indices of the atoms onto which the columns of 
+            the data were projected.
+        rho_values: ndarray
+            (N) vector of float representing the coefficients by which the 
+            atoms are multiplied to obtain the projections.
+        ph_values: ndarray
+            (N) vector of float - the phases associated with the projections.
+        param_values: ndarray
+            (N) vector of float - the parameter values associated with the 
+            selected atoms.
+
         """
+
+        # calculate the dot products of the data with the normalized atoms and
+        # select the atom with the largest product for each column
         dot_prod_all = self._norm_database.T.conj() @ data
         selected_atoms = np.argmax(np.abs(dot_prod_all), axis=0)
-        selected_prod = dot_prod_all[selected_atoms,np.arange(data.shape[1])]
+        # from each column select the maximum dot product
+        selected_prod = dot_prod_all[selected_atoms, np.arange(data.shape[1])]
         # to get the rho values need to divide by norms
-        coeffs = selected_prod / self.norms[selected_atoms]
-        rho_values = np.abs(coeffs)
+        coeff = selected_prod / self.norms[selected_atoms]
+        # the rho and ph values are the magnitudes and the phases of the 
+        # complex coefficients respectively 
+        rho_values = np.abs(coeff)
         ph_values = np.angle(selected_prod)
         param_values = self.param_values[selected_atoms]
-        projected_data = self.database[:,selected_atoms] * coeffs
+        projected_data = self.database[:, selected_atoms] * coeff
 
-        return projected_data, selected_atoms, rho_values, ph_values, param_values
+        return projected_data, coeff, selected_atoms, rho_values, ph_values, \
+               param_values
 
-    def fit_param(self, data_to_fit):
+    def sparsify(self, data):
+        """Sparsifying method of the sparse representation.
+
+        Parameters
+        ----------
+        data: ndarray
+            (PxN) matrix of complex values in which the signals to be 
+            sparsified are placed along the columns.
+
+        Returns
+        -------
+        ndarray
+            (PxN) matrix of float values in which the sparsified signals of 
+            the data are placed along the columns.
+
+        """
+
+        # wrap around the project method
+        return self.project(data)[0]
+
+    def fit_param(self, data_to_fit, threshold_signal=1e-5):
+        """Fit parameter values to data based on projection onto the database.
+        
+        Parameters
+        ----------
+        data_to_fit: ndarray
+            (Px...) array of complex values in which the signals to be 
+            sparsified are placed along the columns.
+        threshold_signal: float
+            Threshold value for a signal to be fit. If all of the intensity
+            values of a signal fall under this threshold a zero will be 
+            returned.
+
+        Returns
+        -------
+        param_map: ndarray
+            (...) array of float - the parameter values associated with the 
+            selected atoms.
+        rho_map: ndarray
+            (...) array of float representing the coefficients by which the 
+            atoms are multiplied to obtain the projections.
+        ph_map: ndarray
+            (...) array of float - the phases associated with the projections.
+
+        """
+
         shape_map = data_to_fit.shape[1:]
+        # intialize with maps of zeros
         rho_map = np.zeros(shape_map)
         ph_map = np.zeros(shape_map)
         param_map = np.zeros(shape_map)
-        mask_nonzero = np.any(np.abs(data_to_fit) > self.threshold_signal, axis=0)
-        rho_map[mask_nonzero], ph_map[mask_nonzero], param_map[mask_nonzero] = \
-            self.project(data_to_fit[:,mask_nonzero])[2:5]
-        return param_map, rho_map, ph_map
-
-    def fit_param_to_stack(self, image_stack):
-        shape_map = image_stack.shape[1:]
-        rho_map = np.zeros(shape_map)
-        ph_map = np.zeros(shape_map)
-        param_map = np.zeros(shape_map)
-        mask = np.logical_not(image_stack.background_mask)
-        param_map[mask], rho_map[mask], ph_map[mask] = \
-            self.fit_param(image_stack.voxels_masked())
+        # select only the signals strong enough to be considered
+        mask_nonzero = np.any(np.abs(data_to_fit) > threshold_signal, axis=0)
+        # use the project method
+        rho_map[mask_nonzero], ph_map[mask_nonzero], param_map[mask_nonzero] \
+            = self.project(data_to_fit[:, mask_nonzero])[-3:]
         return param_map, rho_map, ph_map
 
 class DictionaryKSVD(SparseRepresentation):
