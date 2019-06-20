@@ -1,7 +1,5 @@
 from copy import deepcopy
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
 from scipy.fftpack import fft2, ifft2, fftshift, ifftshift
 
 class ArrayProperty(np.ndarray):
@@ -172,6 +170,7 @@ class ImageSeries(object):
 
         Returns
         -------
+        ndarray
             (PxZ) matrix in which each column represents the signal in a voxel
             along the parameter encoding dimension. Only the voxels that are
             not masked out are returned.
@@ -193,6 +192,7 @@ class ImageSeries(object):
 
         Returns
         -------
+        ndarray
             (PxMxN) array of complex values representing the image space in 
             which the voxels that are masked are replaced by 0.
         
@@ -210,53 +210,96 @@ class ImageSeries(object):
             other_im_stack.image_space
         return diff_im_stack
         
-class UndersampledStack(ImageSeries):
+class UndersampledSeries(ImageSeries):
     """Subclass of Image Stack with undersampled k-space data attached.
 
     Parameters
     ----------
-    k_space_data: complex vector
-        Vector containing the undersampled data corresponding to the
-        k-space locations in mask.
-    mask: bool 3D array
-        The undersampling mask.
+    k_space_data: ndarray
+        1D vector of complex values containing the undersampled data 
+        corresponding to the k-space locations in mask.
+    mask: ndarray
+        (PxMxN) array of bool values representing the sampling mask.
+    background_mask: ndarray, optional
+        (MxN) array of bool values where False marks the voxels belonging to 
+        the background of the images in the series. The default is an array 
+        of ones i.e. no background.
+    p_values: ndarray, optional
+        (P) vector of float values representing the physical values of the 
+        encoding dimension at which the images were taken e.g. time [msec]. 
+        The default is a uniform range of values from 0 to P-1.
+    x_limits: tuple of float. optional
+        Two values specifying the physical coordinates of the left corner and
+        right corner of the images along the x dimension (last in the image
+        space with N corresponding voxels) e.g. values in [m]. 
+        Default is (0, 1).
+    y_limits: tuple of float, optional
+        Two values specifying the physical coordinates of the top corner and
+        bottom corner of the images along the y dimension (last in the image
+        space with M corresponding voxels) e.g. values in [m].
+        Default is (0, 1).
 
     Attributes
     ----------
-    # TODO
+    k_space_data: ndarray
+        1D vector of complex values containing the undersampled data 
+        corresponding to the k-space locations in mask.
+    mask: ndarray
+        (PxMxN) array of bool values representing the undersampling mask.
+    undersampling_factor
+
     """
 
-    def __init__(self, k_space_data, mask, p_values, background_mask=None, 
+    def __init__(self, k_space_data, mask, background_mask=None, p_values=None, 
                  x_limits=(0,1), y_limits=(0,1)):
         self.mask = mask
         self.k_space_data = k_space_data
         image_space = np.zeros_like(mask, dtype=complex)
-        super().__init__(image_space, p_values, background_mask=background_mask, 
-                         x_limits=x_limits, y_limits=y_limits)
+        super().__init__(image_space, background_mask=background_mask, 
+                         p_values=p_values, x_limits=x_limits, 
+                         y_limits=y_limits)
         self.checkout_data()
 
-    def checkout_data(self, image_stack=None):
-        if image_stack is None:
-            image_stack = self
-        image_stack.k_space[self.mask] = self.k_space_data
+    def checkout_data(self, image_series=None):
+        """Replaces the known k-space values into the given image series.
+        
+        Parameters
+        ----------
+        image_series: ImageSeries, optional
+            ImageSeries whose k-space values are to be replaced by the
+            k-space data stored in the UndersampledSeries at the locations
+            defined by the sampling mask. The default is the instance of the
+            class itself.
+
+        """
+        
+        if image_series is None:
+            image_series = self
+        # replace the k-space values at the locations specified by mask using
+        # the known k-space data
+        image_series.k_space[self.mask] = self.k_space_data
 
     @property
     def undersampling_factor(self):
+        """float: The acceleration factor corresponding to the mask used."""
+
+        # number of voxels / number of k-space values collected
         return self.mask.size / np.count_nonzero(self.mask)
 
     @staticmethod
-    def from_complete_stack(complete_im_stack, yp_mask):
-        """Create an UndersampledStack from an ImageSeries using the given yp mask.
+    def from_complete_series(complete_im_series, mask):
+        """Create an UndersampledSeries by subsampling the k-space of a 
+        completely sampled ImageSeries using the given mask.
         """
 
-        mask = np.moveaxis(yp_mask, -1, 0)
-        mask = np.tile(mask[:,:,np.newaxis], complete_im_stack.shape[2])
-        undersamp_stack = UndersampledStack(complete_im_stack.k_space[mask], mask,
-                                            p_values=complete_im_stack.p_values[:],
-                                            background_mask=complete_im_stack.background_mask[:],
-                                            x_limits=complete_im_stack.x_limits[:],
-                                            y_limits=complete_im_stack.y_limits[:])
-        return undersamp_stack
+        # make sure everything is copied
+        undersamp_series = UndersampledSeries(
+            complete_im_series.k_space[mask], mask,
+            p_values=complete_im_series.p_values[:],
+            background_mask=complete_im_series.background_mask[:],
+            x_limits=complete_im_series.x_limits[:],
+            y_limits=complete_im_series.y_limits[:])
+        return undersamp_series
 
 def rms_diff_stack(im_stack1, im_stack2):
     return rms_diff(im_stack1.voxels, im_stack2.voxels)
