@@ -28,6 +28,7 @@ class GridDatabase(SparseRepresentation):
     ----------
     database
     norms
+    n_rep
     n_atoms
 
     """
@@ -70,6 +71,14 @@ class GridDatabase(SparseRepresentation):
         """
 
         return self._norms
+
+    @property
+    def n_rep(self):
+        """int: Number of dictionary atoms to be used in representing the 
+        signals sparsely."""
+
+        # in the database only one atom is used in sparse representation
+        return 1 
 
     @property
     def n_atoms(self):
@@ -185,6 +194,30 @@ class GridDatabase(SparseRepresentation):
         return param_map, rho_map, ph_map
 
 class DictionaryKSVD(SparseRepresentation):
+    """Class containing the K-SVD dictionary sparse representation.
+
+    Parameters
+    ----------
+    n_rep: int, optional
+        Number of dictionary atoms to be used in representing the signals
+        sparsely. The default is 3.
+    dictionary: ndarray, optional
+        (PxA) matrix of float values containing the dictionary with the 
+        parameter encoding dimension (e.g. time) along the columns. The
+        columns must be normalized. 
+        The default is None.
+
+    Attributes
+    ----------
+    n_rep: int
+        Number of dictionary atoms to be used in representing the signals
+        sparsely.
+    dictionary: ndarray
+        (PxA) matrix of float values containing the dictionary with the 
+        parameter encoding dimension (e.g. time) along the columns. 
+    n_atoms
+
+    """
 
     def __init__(self, n_rep=3, *, dictionary=None):
         self.n_rep = n_rep
@@ -193,37 +226,157 @@ class DictionaryKSVD(SparseRepresentation):
             
     @property
     def n_atoms(self):
+        """int: The number A of atoms stored in the dictionary."""
+
         return self.dictionary.shape[1]
 
     def project(self, data):
-        coeff = OMP_vic(self.dictionary, data, self.n_rep)
+        """OMP projection on the database space.
+
+        Parameters
+        ----------
+        data: ndarray
+            (PxN) matrix of complex values in which the signals to be 
+            projected are placed along the columns.
+
+        Returns
+        -------
+        projected_data: ndarray
+            (PxN) matrix of float values in which the signal projections of 
+            the data are placed along the columns.
+        coeff: sparse.csc_matrix
+            (n_rep x N) sparse matrix of complex values with the OMP 
+            coefficients of the signals in data placed along columns.         
+        
+        """
+
+        coeff = OMP(self.dictionary, data, self.n_rep)
         projected_data = self.dictionary @ coeff
         return projected_data, coeff
 
-class PrincipalComponents(SparseRepresentation):
+    def sparsify(self, data):
+        """Sparsifying method of the sparse representation.
 
-    def __init__(self, n_pc=None, train_data=None, n_pc_stored=None, norm_data=True):
-        self.n_pc = n_pc
+        Parameters
+        ----------
+        data: ndarray
+            (PxN) matrix of complex values in which the signals to be 
+            sparsified are placed along the columns.
+
+        Returns
+        -------
+        ndarray
+            (PxN) matrix of float values in which the sparsified signals of 
+            the data are placed along the columns.
+
+        """
+
+        # wrap around the project method
+        return self.project(data)[0]    
+
+class PrincipalComponents(SparseRepresentation):
+    """Class containing the Principal Components (PCs) sparse representation.
+
+    Parameters
+    ----------
+    n_rep: int, optional
+        Number of PCs to be used in representing the signals sparsely. 
+        The default is n_pc_stored.
+    train_data: ndarray, optional
+        (PxN) matrix of float values in which the signals from which the PCs 
+        are extracted are placed along the columns.
+    n_pc_stored: int, optional
+        Number of PCs of the training data stored by the instance. 
+        The default is P the dimensionality of the signal.
+    norm_data: bool, optional
+        Whether to normalize the train data before extracting the PCs.
+        The default is True.
+
+    Attributes
+    ----------
+    n_rep: int
+        Number of PCs to be used in representing the signals sparsely.
+    pcs_stored: ndarray
+        (P x n_pc_stored) matrix of float values containing the stored PCs 
+        with the parameter encoding dimension (e.g. time) along the columns.
+    pcs  
+    n_atoms
+
+    """
+    def __init__(self, n_rep=None, train_data=None, n_pc_stored=None, 
+                 norm_data=True):
+        self.n_rep = n_rep
         if train_data is not None:
-            self.train(train_data, n_pc_stored=n_pc_stored, norm_data=norm_data)
+            self.train(train_data, n_pc_stored=n_pc_stored, 
+                       norm_data=norm_data)
 
     @property
     def pcs(self):
-        return self.pcs_stored[:, 0:self.n_pc]
+        """ndarray: (P x n_rep) matrix of float values containing the PCs to 
+        be used in sparsifying methods along the columns."""
+
+        return self.pcs_stored[:, 0:self.n_rep]
+
+    @property
+    def n_atoms(self):
+        """int: The number A of atoms i.e. signals stored in the database."""
+
+        # implemented to be consistent with other sparse representations
+        return self.pcs_stored.shape[1]
+
+    @property
+    def norm_data(self):
+        """bool: Whether the data was normalized before PC extraction."""
+
+        return self._norm_data
 
     def train(self, train_data, n_pc_stored=None, norm_data=True):
+        """Extract the PCs from the given train data.
+        
+        Parameters
+        ----------
+        train_data: ndarray, optional
+            (PxN) matrix of float values in which the signals from which the 
+            PCs are extracted are placed along the columns.
+        n_pc_stored: int, optional
+            Number of PCs of the training data stored by the instance. 
+            The default is P the dimensionality of the signal.
+        norm_data: bool, optional
+            Whether to normalize the train data before extracting the PCs.
+            The default is True.
 
+        Returns
+        -------
+        ndarray
+            (P x n_rep) matrix of float values containing the extracted 
+            PCs to be used in spasifying methods.
+        ndarray
+            (n_rep x N) vector of float values representing the coefficients 
+            by which the PCs are multiplied to obtain the projections of the 
+            train signals.
+        float
+            RMSE of the projection of the train data onto the extracted PCs.
+
+        """
+
+        # normalize if necessary
+        self._norm_data = norm_data
         if norm_data:
             train_data = train_data / np.linalg.norm(train_data, axis=0)
+        # extract PCs through SVD
         u, s, vh = svd(train_data, full_matrices=False)
+        # default number of PCs stored
         if n_pc_stored is None:
             n_pc_stored = u.shape[1]
         else:
             n_pc_stored = n_pc_stored
-        if self.n_pc is None:
-            self.n_pc = n_pc_stored        
+        # default number of PCs used in projections by the instance
+        if self.n_rep is None:
+            self.n_rep = n_pc_stored        
+        # store the required number of PCs and calculate the error of
+        # representation of the train data
         self.pcs_stored = u[:, 0:n_pc_stored]
-        coeff = (np.diag(s) @ vh)[0:self.n_pc]
+        coeff = (np.diag(s) @ vh)[0:self.n_rep]
         err = np.sqrt(((self.pcs@coeff - train_data)**2).mean())
         return self.pcs, coeff, err
 
@@ -232,24 +385,46 @@ class PrincipalComponents(SparseRepresentation):
 
         Parameters
         ----------
-        data: float
+        data: ndarray
             Matrix in which the signals to be projected 
             are placed along the columns.
 
         Returns
         -------
-        projected_data: float
+        projected_data: ndarray
             Matrix in which the signal projections of 
             the data are placed along the columns.
-        coeff: float
+        coeff: ndarray
             Matrix with the PC coefficients corresponding
             to each signal in data placed along columns.
+
         """
+
         coeff = self.pcs.T.conj() @ data
         projected_data = self.pcs @ coeff
         return projected_data, coeff
 
-def OMP_vic(dictionary, data, L, threshold=1e-6):
+    def sparsify(self, data):
+        """Sparsifying method of the sparse representation.
+
+        Parameters
+        ----------
+        data: ndarray
+            (PxN) matrix of complex values in which the signals to be 
+            sparsified are placed along the columns.
+
+        Returns
+        -------
+        ndarray
+            (PxN) matrix of float values in which the sparsified signals of 
+            the data are placed along the columns.
+
+        """
+
+        # wrap around the project method
+        return self.project(data)[0]    
+
+def OMP(dictionary, data, L, threshold=0):
     """Orthogonal mathcing pursuit projection onto dictionary.
 
     Parameters
@@ -263,9 +438,10 @@ def OMP_vic(dictionary, data, L, threshold=1e-6):
     L: int
         The number of dictionary entries used in 
         the sparse representation.
-    threshold: float
+    threshold: float, optional
         Threshold to stop OMP for a column if the norm
         of its residual is less than the threshold.
+        The default is 0.
     
     Returns
     -------
@@ -273,6 +449,7 @@ def OMP_vic(dictionary, data, L, threshold=1e-6):
         Matrix with the OMP coefficients corresponding
         to each signal in data placed along columns.
     """
+
     # n is the number of dimensions of the signal
     # P is the number of data points
     n, P = data.shape
@@ -284,7 +461,7 @@ def OMP_vic(dictionary, data, L, threshold=1e-6):
     indx = np.full((L, P), -1, dtype=int)
 
     remain_n = P
-    remain_indx = np.array(range(P)) # indices of remaining data
+    remain_indx = np.array(range(P)) # indices of remaining not ok data 
     residual = data.copy()
 
     for i in range(L):
@@ -294,10 +471,13 @@ def OMP_vic(dictionary, data, L, threshold=1e-6):
         # each data point
         pos = np.argmax(np.abs(proj), axis=0)
         
-        ok = np.full(remain_n, False)
+        # mark the data points for which the OMP projection is done because 
+        # the residual norm fell under the thrsehold 
+        ok = np.linalg.norm(residual[:, remain_indx], axis=0) <= threshold
+
         # check if the atom is repeating for each data point
-        # if it does it means the residual for that signal 
-        # is zero so mark it as ok and remove it from residual
+        # if it does it means there is a truncation error
+        # so mark it as ok and remove it from residual
         for j in range(remain_n):
             if pos[j] in indx[:, remain_indx[j]]:
                 ok[j] = True
@@ -322,69 +502,3 @@ def OMP_vic(dictionary, data, L, threshold=1e-6):
             residual[:, j] = data[:, j] - dictionary[:, indx[:i+1, j]] @ a
 
     return sparse.csc_matrix(A)
-
-def OMP_non_sparse(dictionary, data, L):
-    """Orthogonal mathcing pursuit projection onto dictionary.
-
-    Parameters
-    ----------
-    dictionary: float matrix   
-        Matrix representing a dictionary with entries along
-        the columns. The columns need to be normalized.
-    data: float matrix
-        Matrix in which the signals to be projected 
-        are placed along the columns.
-    L: int
-        The number of dictionary entries used in 
-        the sparse representation.
-    
-    Returns
-    -------
-    A: float matrix
-        Matrix with the OMP coefficients corresponding
-        to each signal in data placed along columns.
-    """
-    n, P = data.shape
-    K = dictionary.shape[-1]
-    A = np.zeros((K, P), dtype=data.dtype)
-    indx = np.full((L, P), -1, dtype=int)
-
-    remain_n = P
-    remain_indx = np.array(range(P)) # indices of remaining data
-    residual = data.copy()
-
-    for i in range(L):
-        proj = dictionary.T.conj() @ residual
-        pos = np.argmax(np.abs(proj), axis=0)
-        
-        ok = np.full(remain_n, False)
-        # check if the atom is repeating
-        # TODO: need to also check a threshold of error
-        for j in range(remain_n):
-            if pos[j] in indx[:,remain_indx[j]]:
-                ok[j] = True
-        remain_indx = remain_indx[np.logical_not(ok)]
-        remain_n = remain_n - np.sum(ok)
-        # break if there is no new atom to project onto
-        if remain_n == 0:
-            break
-
-        indx[i,remain_indx] = pos[np.logical_not(ok)]
-
-        indx[:i+1,remain_indx] = np.sort(indx[:i+1,remain_indx], axis=0)
-        # C does not include -1 indices because only the indices of the remaining data are sorted
-        C, ic = np.unique(indx[:i+1,remain_indx], axis=1, return_inverse=True)
-        residual = np.zeros((n,remain_n), dtype=data.dtype)
-        for j in range(C.shape[1]):
-            selected_data = remain_indx[ic==j]
-            a = np.linalg.pinv(dictionary[:,C[:,j]]) @ data[:,selected_data]
-
-            temp = np.zeros((K,len(selected_data)), dtype=data.dtype)
-            temp[C[:,j],:] = a
-            A[:,selected_data] = temp
-
-            residual[:,ic==j] = data[:,selected_data] - dictionary[:,C[:,j]] @ a
-
-    return A
-
-
