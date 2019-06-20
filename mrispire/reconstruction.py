@@ -1,6 +1,8 @@
 from copy import deepcopy
 import numpy as np
 
+from .metrics import *
+
 class SparseReconstructor(object):
     """Class performing reconstruction based on a sparse representation.
     
@@ -15,7 +17,7 @@ class SparseReconstructor(object):
         Whether to trigger events to analyze the reconstruction in each 
         iteration. The default is True.
     rec_analyzers: list, optional
-        List of objects that implement the reconstruction analysis methods:
+        List of objects that implement the reconstruction analyzer methods:
         - on_signal_sparsified(i, reconstr_series)
         - on_data_inserted(i, reconstr_series)
         The default is an empty list.
@@ -56,7 +58,7 @@ class SparseReconstructor(object):
 
     def reconstruct(self, undersampled_series, series_to_rec=None, 
                     in_place=False):
-        """Recontstruct the undersampled series.
+        """Reconstruct the undersampled series.
 
         Parameters
         ----------
@@ -128,36 +130,41 @@ class SparseReconstructor(object):
 class Storer(object):
     """Reconstruction analyzer which stores all the intermediary results.
 
-    Parameters
-    ----------
-
     Attributes
     ----------
-    stored_projections: float 4D array
-        The series of reconstructions immediately after projection onto 
-        the sparse representation space.
-    stored_reconstructions: float 4D array
-        The series of reconstructions after consistency with data 
-        is imposed.
-    # TODO: continue here
+    stored_sparse: ndarray
+        4D array that stores the series of reconstructions immediately after 
+        the sparsifying step.
+    stored_reconstructions: ndarray
+        4D array that stores the series of reconstructions after the 
+        data consistency is imposed.
+    step_sp: list of int
+        The steps of reconstruction at which the sparsified reconstructions 
+        were captured.
+    step_rec: list of int
+        The steps of reconstruction at which the data consistent 
+        reconstructions were captured.
+
     """
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.stored_projections = np.empty((0))
+        self.stored_sparse = np.empty((0))
         self.stored_reconstructions = np.empty((0))
-        # the step of reconstruction at which the projection was captured
-        self.step_proj = []
-        # the step of reconstruction at which the reconstruction was captured
+        # the steps of reconstruction at which the sparsified reconstructions 
+        # were captured
+        self.step_sp = []
+        # the steps of reconstruction at which the data consistent 
+        # reconstructions were captured
         self.step_rec = []
 
     def on_signal_sparsified(self, i, reconstr_series):
-        proj_list = list(self.stored_projections)
+        proj_list = list(self.stored_sparse)
         proj_list.append(reconstr_series.image_space)
-        self.stored_projections = np.array(proj_list)
-        self.step_proj.append(i)
+        self.stored_sparse = np.array(proj_list)
+        self.step_sp.append(i)
 
     def on_data_inserted(self, i, reconstr_series):
         if i == 0:
@@ -168,20 +175,44 @@ class Storer(object):
         self.step_rec.append(i)
 
 class DistanceRecorder(object):
-    """Reconstruction analyzer which stores all the intermediary errors.
+    """Reconstruction analyzer which calculates distances of the 
+    reconstruction from specified reference ImageSeries points.
 
     Parameters
     ----------
+    ref_points: list of ImageSeries
+        ImageSeries instances which are used as reference points to calculate
+        distances to the reconstructed series during the reconstruction.
+    distance: function, optional
+        Function with signature:
+            distance(ImageSeries, ImageSeries)
+        which implements a way to calculate distances between two ImageSeries
+        instances. The default is rms_diff_series.
 
     Attributes
     ----------
-    RMSE: float vector
+    ref_points: list of ImageSeries
+        ImageSeries instances which are used as reference points to calculate
+        distances to the reconstructed series during the reconstruction.
+    distance: function
+        Function with signature:
+            distance(ImageSeries, ImageSeries)
+        which implements a way to calculate distances between two ImageSeries
+        instances.  
+    step_sp: list of int
+        The steps of reconstruction at which the sparsified reconstructions 
+        were captured.
+    step_rec: list of int
+        The steps of reconstruction at which the data consistent 
+        reconstructions were captured.
+
+    
     """
 
-    def __init__(self, ref_points=[], masks=[], distance=rms_diff_series):
+    def __init__(self, ref_points=[], distance=rms_diff_series):
         self.ref_points = ref_points
-        self.masks = masks
-        # function that calculates the distance between two ImageSeries instances
+        # function that calculates the distance between two ImageSeries 
+        # instances
         self.distance = distance
         self.reset()
 
@@ -190,26 +221,34 @@ class DistanceRecorder(object):
         self.dist_ref_to_proj = np.empty((len(self.ref_points), 0))
         self.dist_proj_to_rec = []        
         self.step_rec = []
-        self.step_proj = []
+        self.step_sp = []
 
     def on_signal_sparsified(self, i, reconstr_series):
-        self.step_proj.append(i)
+        self.step_sp.append(i)
+        # calculate distances to reference points
         ref_proj = [[self.distance(reconstr_series, ref)] 
                     for ref in self.ref_points]
+        # append to stored distances
         self.dist_ref_to_proj = np.append(self.dist_ref_to_proj, 
                                           ref_proj, axis=1)
+        # keep a copy of the latest projection onto the sparse representation
         self.last_proj = deepcopy(reconstr_series)
 
     def on_data_inserted(self, i, reconstr_series):
         if i == 0:
             self.reset()
         else:
+            # calculate the distance between the data consistent series and 
+            # the latest projected/sparsified series
             self.dist_proj_to_rec = np.append(
                 self.dist_proj_to_rec, 
                 self.distance(reconstr_series, self.last_proj)
             )
         self.step_rec.append(i)
+        # calculate distances to reference points
         ref_rec = [[self.distance(reconstr_series, ref)] 
                     for ref in self.ref_points]
+        # append to stored distances
         self.dist_ref_to_rec = np.append(self.dist_ref_to_rec, 
                                           ref_rec, axis=1)
+
