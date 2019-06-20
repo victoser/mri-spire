@@ -4,38 +4,106 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 from scipy.fftpack import fft2, ifft2, fftshift, ifftshift
 
-class KSpace(np.ndarray):
+class ArrayProperty(np.ndarray):
+    """NumPy ndarray subclass to be used as the property of another class.
+    
+    This class was created to solve the following issue: when the property 
+    of a class is a NumPy array, assigning new values to it through array 
+    indexing does not call the setter of that property. For example:
 
+    obj.arr_property[:] = 0
+
+    When this line is executed, the getter of arr_property returns a NumPy 
+    array the values of which are all set to 0. This is not the desired 
+    behaviour. We would like the setter of arr_property to be executed instead.
+    
+    This class allows that. The getter must return the array property cast 
+    as an ArrayProperty. The returned instance keeps the property setter as
+    a callback function executed when it is assigned values through indexing. 
+
+    The problem is described in detail here:
+    https://stackoverflow.com/questions/24890393/
+
+    """
+
+    def __new__(cls, input_array, arr_setter):
+        # The use of __new__ is detailed at:
+        # https://docs.scipy.org/doc/numpy/user/basics.subclassing.html
+
+        # Input array is an already formed ndarray instance
+        # We first cast to be our class type
+        obj =  np.asarray(input_array).view(cls)
+        # add the array property setter as an attribute to the created 
+        # instance; the setter is a callback to the class where the property 
+        # is defined
+        obj.arr_setter = arr_setter
+        # Finally, we must return the newly created object:
+        return obj
+    
     def __setitem__(self, key, value):
+        # call the __setitem__ method of the superclass;
+        # this modifies the array according to the indexed assignment
         super().__setitem__(key, value)
-        self.image_stack.k_space = np.array(self)
+        # if the instance has an array setter attribute call the 
+        # setter with the new array as argument
+        if getattr(self, 'arr_setter', None) is not None:
+            self.arr_setter(np.array(self))
 
-class Voxels(np.ndarray):
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        self.image_stack.voxels = np.array(self)
-
-class ImageStack(object):
+class ImageSeries(object):
     """Class representing the images collected in an MRI sequence.
     
     Parameters
     ----------
-    p_values: NumPy vector
-    
+    image_space: ndarray
+        (PxMxN) array of complex values representing P (MxN) MRI images
+        collected at P different values along the P (parameter encoding) 
+        dimension e.g. time.
+    background_mask: ndarray, optional
+        (MxN) array of bool values where False marks the voxels belonging to 
+        the background of the images in the series. The default is an array 
+        of ones i.e. no background.
+    p_values: ndarray, optional
+        (P) vector of float values representing the physical values of the 
+        encoding dimension at which the images were taken e.g. time [msec]. 
+        The default is a uniform range of values from 0 to P-1.
+    x_limits: tuple of float. optional
+        Two values specifying the physical coordinates of the left corner and
+        right corner of the images along the x dimension (last in the image
+        space with N corresponding voxels) e.g. values in [m]. 
+        Default is (0, 1).
+    y_limits: tuple of float, optional
+        Two values specifying the physical coordinates of the top corner and
+        bottom corner of the images along the y dimension (last in the image
+        space with M corresponding voxels) e.g. values in [m].
+        Default is (0, 1).
+
     Attributes
     ----------
-    p_values: NumPy vector
+    image_space: ndarray
+        (PxMxN) array of complex values representing the image space.
+    background_mask: ndarray
+        (MxN) array of bool values masking out the background.
+    p_values: ndarray
+        (P) vector of coordinates along the encoding dimension.
+    x_limits: tuple of float
+        The coordinates of the limits of each image along the x dimension.
+    y_limits: tuple of float
+        The coordinates of the limits of each image along the y dimension.
+    shape
+    k_space
+    voxels
+    
     """
     
-    def __init__(self, image_space, p_values=None, background_mask=None, x_limits=(0,1), y_limits=(0,1)):
+    def __init__(self, image_space, background_mask=None, p_values=None, 
+                 x_limits=(0,1), y_limits=(0,1)):
         self.image_space = image_space
         if p_values is None:
             self.p_values = np.arange(self.image_space.shape[0])
         else:
             self.p_values = p_values
         if background_mask is None:
-            self.background_mask = np.zeros(image_space.shape[1:], dtype=bool)
+            self.background_mask = np.ones(image_space.shape[1:], dtype=bool)
         else:
             self.background_mask = background_mask
         self.x_limits = x_limits
@@ -43,77 +111,106 @@ class ImageStack(object):
          
     @property
     def shape(self):
+        """tuple of int: The shape of the image space array i.e. (P, M, N)."""
+        
         return self.image_space.shape
         
     @property
     def k_space(self):
-        k_space_array = fftshift(fft2(self.image_space), (1, 2))
-        k_space_array = k_space_array.view(KSpace)
-        k_space_array.image_stack = self
-        return k_space_array
+        """ndarray: (PxMxN) array of complex values representing the k-space.
         
+        Only the image space of the MR image series is stored by the class.
+        The k-space is calculated from it using FFT2 whenever required.
+
+        """
+
+        # calculate the k-space from the image space
+        k_space_array = fftshift(fft2(self.image_space), (1, 2))
+        # cast as an ArrayProperty and pass the setter of k-space to it
+        k_space_array = ArrayProperty(k_space_array, self._k_space_setter)
+        return k_space_array
+    
+    def _k_space_setter(self, k_space):
+        # the class stores the data in image space only, therefore the image 
+        # space is updated whenever changes to the k-space are made
+        self.image_space = ifft2(ifftshift(k_space, (1, 2)))
+
     @k_space.setter
     def k_space(self, k_space):
-        self.image_space = ifft2(ifftshift(k_space, (1, 2)))
+        self._k_space_setter(k_space)
         
     @property
     def voxels(self):
+        """ndarray: (PxMN) array of complex values representing the voxels.
+        
+        Returns a matrix in which each column represents the signal in a voxel
+        along the parameter encoding dimension.
+
+        """
+
+        # flatten all the P images and return as an ArrayProperty
         voxels_array = self.image_space.reshape([self.shape[0], -1])
-        voxels_array = voxels_array.view(Voxels)
-        voxels_array.image_stack = self
+        voxels_array = ArrayProperty(voxels_array, self._voxels_setter)
         return voxels_array
     
-    @voxels.setter
-    def voxels(self, voxels):
+    def _voxels_setter(self, voxels):
+        # reshape as image space and modify the stored data
         self.image_space = voxels.reshape(self.shape)
 
+    @voxels.setter
+    def voxels(self, voxels):
+        self._voxels_setter(voxels)
+
     def voxels_masked(self, mask=None):
+        """Returns the voxels selected by the input mask in matrix format.
+        
+        Parameters
+        ----------
+        mask: ndarray, optional
+            (MxN) array of bool values selecting the masked voxels. 
+            The default is the background mask.
+
+        Returns
+        -------
+            (PxZ) matrix in which each column represents the signal in a voxel
+            along the parameter encoding dimension. Only the voxels that are
+            not masked out are returned.
+        
+        """
+        
         if mask is None:
             mask = self.background_mask
-        return self.image_space[:, np.logical_not(mask)]
+        return self.image_space[:, mask]
 
     def image_space_masked(self, mask=None):
+        """Returns an image space where some voxels are masked out.
+        
+        Parameters
+        ----------
+        mask: ndarray, optional
+            (MxN) array of bool values selecting the masked voxels. 
+            The default is the background mask.
+
+        Returns
+        -------
+            (PxMxN) array of complex values representing the image space in 
+            which the voxels that are masked are replaced by 0.
+        
+        """
+
         if mask is None:
             mask = self.background_mask
-        return self.image_space * np.logical_not(mask)
-
-    def view_stack(self, im_ax=None, slider_ax=None, fig=None):
-        if im_ax is None:
-            if fig is None:
-                fig = plt.figure()
-            im_ax = fig.add_subplot(111)
-            plt.subplots_adjust(bottom=0.25)
-        im_ax.imshow(np.abs(self.image_space[0]))
-        if slider_ax is None:
-            l, b, w, _ = im_ax.get_position().bounds
-            slider_ax = plt.axes([l, b-0.1, w, 0.03])
-        sindex = Slider(slider_ax, 'Image index', 1., float(self.image_space.shape[0]), valstep=1.)
-        def update(val):
-            im_indx = int(val) - 1
-            im_ax.imshow(np.abs(self.image_space[im_indx]))
-            im_ax.figure.canvas.draw()
-            plt.show()
-        sindex.on_changed(update)
-        return sindex # this makes sure the slider is not garbage collected wherever the function is called
-
-    def plot_images(self, im_to_plot=None, fig_seq=None):
-        if im_to_plot is None:
-            im_to_plot = range(self.shape[0])
-        if fig_seq is None:
-            fig_seq = [plt.figure() for _ in range(len(im_to_plot))]
-        for im, fig in zip(im_to_plot, fig_seq):
-            plt.figure(fig.number)
-            plt.imshow(np.abs(self.image_space[im]))
-            plt.colorbar()
-            plt.title('Parameter value: ' + str(self.p_values[im]))
+        return self.image_space * mask
 
     def __sub__(self, other_im_stack):
-        diff_im_stack = deepcopy(self)
+        # implement subtraction of two image series
+        diff_im_stack = deepcopy(self) # meta-data from this instance
+        # subtract the two image spaces
         diff_im_stack.image_space = self.image_space - \
             other_im_stack.image_space
         return diff_im_stack
         
-class UndersampledStack(ImageStack):
+class UndersampledStack(ImageSeries):
     """Subclass of Image Stack with undersampled k-space data attached.
 
     Parameters
@@ -149,7 +246,7 @@ class UndersampledStack(ImageStack):
 
     @staticmethod
     def from_complete_stack(complete_im_stack, yp_mask):
-        """Create an UndersampledStack from an ImageStack using the given yp mask.
+        """Create an UndersampledStack from an ImageSeries using the given yp mask.
         """
 
         mask = np.moveaxis(yp_mask, -1, 0)
