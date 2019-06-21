@@ -199,6 +199,10 @@ class DistanceRecorder(object):
             distance(ImageSeries, ImageSeries)
         which implements a way to calculate distances between two ImageSeries
         instances.  
+    dist_ref_to_rec: ndarray
+        Matrix in which each row represents the recorded distances from the 
+        corresponding reference point in ref_points to the reconstruction
+        after the reconstruction steps.
     step_sp: list of int
         The steps of reconstruction at which the sparsified reconstructions 
         were captured.
