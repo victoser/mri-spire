@@ -202,7 +202,14 @@ class DistanceRecorder(object):
     dist_ref_to_rec: ndarray
         Matrix in which each row represents the recorded distances from the 
         corresponding reference point in ref_points to the reconstruction
-        after the reconstruction steps.
+        after the data consistency steps.
+    dist_ref_to_proj: ndarray
+        Matrix in which each row represents the recorded distances from the 
+        corresponding reference point in ref_points to the reconstruction
+        after the sparsifying steps.
+    dist_proj_to_rec: ndarray
+        Vector containing the recorded distances from the latest projection
+        to the reconstruction after the data consistency steps.
     step_sp: list of int
         The steps of reconstruction at which the sparsified reconstructions 
         were captured.
