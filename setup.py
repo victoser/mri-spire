@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
   name = 'mri-spire',
-  version = '0.1',      
+  version = '0.2',      
   license='MIT',
   description = 'Sparse Iterative Reconstructor for quantitative MRI',
   author = 'Victor Serban', 
@@ -13,7 +13,8 @@ setup(
   install_requires=[  
           'numpy',
           'matplotlib',
-          'scipy'
+          'scipy',
+          'bokeh'
   ],
   classifiers=[
     'Intended Audience :: Researchers',
