@@ -8,7 +8,7 @@ setup(
   author = 'Victor Serban', 
   author_email = 'serban.victor@gmail.com', 
   url = 'https://github.com/victoser/mri-spire', 
-  download_url = 'https://github.com/victoser/mri-spire/archive/v0.1.tar.gz', 
+  download_url = 'https://github.com/victoser/mri-spire/archive/v0.2.tar.gz', 
   packages = find_packages(), 
   install_requires=[  
           'numpy',
