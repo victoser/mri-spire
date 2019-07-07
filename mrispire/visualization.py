@@ -69,7 +69,7 @@ class BokehStorerVis(object):
         im.title.text = "Reconstruction"
 
         im_gt = figure(match_aspect=True,
-                    tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")])
+                    tooltips=[("x", "$x"), ("y", "$y"), ("value", "@gt")])
         im_gt.x_range.range_padding = im_gt.y_range.range_padding = 0
         im_gt.x_range.bounds = (0, sz[-1])
         im_gt.y_range.bounds = (0, sz[-2])
