@@ -4,7 +4,7 @@ This package contains a simple iterative MRI reconstruction algorithm based on C
 It reconstructs a series of MR images from undersampled k-space data acquired through a qMRI protocol.
 
 For a theoretical background in Sparse Reconstruction and some examples of the functionality of the 
-package, please check the included demo in demo/Demo.ipynb. For detailed instructions, read the documentation.
+package, please check the included [demo](https://github.com/victoser/mri-spire/blob/master/demo/Demo.ipynb). For detailed instructions, consult the docstrings.
 
 This work incorporates elements of existing algorithms for Compressed Sensing reconstruction in quantitative MRI<sup>1-4</sup>.
 
